@@ -15,7 +15,8 @@ namespace CustomSecondLevelCacheClusterTransport
         private Socket receiverSocket;
 
         public RdmClusterTransport()
-        {            
+        {
+            this.Multicastaddr = "224.1.1.1:444";
         }
 
         public override int MaxMessageSize

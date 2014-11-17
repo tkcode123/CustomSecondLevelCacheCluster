@@ -28,7 +28,7 @@ namespace TestClusterModel
                 {
                     cachedBackendConfiguration.SecondLevelCache.Synchronization.Enabled = true;
                     cachedBackendConfiguration.SecondLevelCache.Synchronization.Name = transport;
-                    cachedBackendConfiguration.SecondLevelCache.Synchronization.MulticastAddress = "224.1.1.1:444";
+                    //cachedBackendConfiguration.SecondLevelCache.Synchronization.MulticastAddress = "224.1.1.1:444";
                     cachedBackendConfiguration.SecondLevelCache.Synchronization.Localpath = "a value that you can interpret";
                 }
                 cachedConnectionId = connectionId;

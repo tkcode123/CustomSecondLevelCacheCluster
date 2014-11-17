@@ -10,8 +10,8 @@ namespace TestCluster
     {
         static void Main(string[] args)
         {
-            using (var ctx = TestClusterModelContext.Create(args.Length > 0 ? args[0] : "DB1", 
-                               typeof(CustomSecondLevelCacheClusterTransport.RdmClusterTransport).AssemblyQualifiedName))
+            using (var ctx = TestClusterModelContext.Create(args.Length > 0 ? args[0] : "DB1",
+                               typeof(CustomSecondLevelCacheClusterTransport.TcpCacheClusterTransport).AssemblyQualifiedName))
             {
                 // Only needed the first time (or when the database model is changed)
                 // ctx.UpdateSchema();

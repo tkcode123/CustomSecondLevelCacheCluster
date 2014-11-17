@@ -17,6 +17,7 @@ namespace CustomSecondLevelCacheClusterTransport
 
         public UdpMulticastClusterTransport()
         {
+            this.Multicastaddr = "224.1.1.1:444";
         }
       
         public override int MaxMessageSize
