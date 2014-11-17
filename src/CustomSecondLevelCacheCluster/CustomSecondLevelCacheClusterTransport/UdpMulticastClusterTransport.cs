@@ -1,58 +1,30 @@
-﻿using System.Net.Sockets;
+﻿using System;
+using System.IO;
 using System.Net;
+using System.Net.Sockets;
 using System.Threading;
 using Telerik.OpenAccess.Cluster;
-using System.IO;
-using System;
 
 namespace CustomSecondLevelCacheClusterTransport
 {
-    public class UdpMulticastClusterTransport : OpenAccessClusterTransport
+    public class UdpMulticastClusterTransport : SecondLevelCacheClusterTransportBase
     {
         public static int Counter = 0;
 
-        private OpenAccessClusterMsgHandler handler;
-        private IOpenAccessClusterTransportLog log;
-        private string multicastAddress;
-        private int multicastPort;
-        private string localpath;
         private Socket senderSocket;
         private Socket receiverSocket;
         private Thread receiverThread;
-        private volatile bool closed;
-        private readonly byte[] localIdentifier;
 
         public UdpMulticastClusterTransport()
         {
-            // delay everything until Init is called!
-            this.localIdentifier = Guid.NewGuid().ToByteArray();
         }
-
-        // set from bc.SecondLevelCache.Synchronization.MulticastAddress = "224.1.1.1:444";
-        public string Multicastaddr
-        {
-            get { return multicastAddress + ":" + multicastPort; }
-            set
-            {
-                int pos = value.IndexOf(':');
-                multicastAddress = value.Substring(0, pos);
-                multicastPort = Int32.Parse(value.Substring(pos + 1));
-            }
-        }
-
-        // set from bc.SecondLevelCache.Synchronization.Localpath = "a value that you can interpret"
-        public string Localpath
-        {
-            get { return localpath; }
-            set { localpath = value; }
-        }
-
-        public int MaxMessageSize
+      
+        public override int MaxMessageSize
         {
             get { return 65000; }
         }
 
-        public void Init(OpenAccessClusterMsgHandler messageHandler, string serverName, string identifier, IOpenAccessClusterTransportLog log)
+        public override void Init(OpenAccessClusterMsgHandler messageHandler, string serverName, string identifier, IOpenAccessClusterTransportLog log)
         {
             this.handler = messageHandler;
             this.log = log;
@@ -85,7 +57,7 @@ namespace CustomSecondLevelCacheClusterTransport
             receiverThread.Start();
         }
 
-        public void SendMessage(byte[] buffer)
+        public override void SendMessage(byte[] buffer)
         {
             var dup = new byte[buffer.Length + localIdentifier.Length];
             Buffer.BlockCopy(localIdentifier, 0, dup, 0, localIdentifier.Length);
@@ -100,7 +72,7 @@ namespace CustomSecondLevelCacheClusterTransport
             }
         }
 
-        public void Close()
+        public override void Close()
         {
             closed = true;
             if (senderSocket != null)
@@ -159,16 +131,6 @@ namespace CustomSecondLevelCacheClusterTransport
             finally // TODO Error handling and restart!
             {
             }
-        }
-
-        private bool SentByMe(byte[] received)
-        {
-            for (int i = 0; i < this.localIdentifier.Length; i++)
-            {
-                if (received[i] != this.localIdentifier[i])
-                    return false;
-            }
-            return true;
         }
     }
 }

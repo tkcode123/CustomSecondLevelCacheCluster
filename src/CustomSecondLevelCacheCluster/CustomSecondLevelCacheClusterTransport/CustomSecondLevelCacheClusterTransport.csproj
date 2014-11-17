@@ -56,6 +56,7 @@
   </ItemGroup>
   <ItemGroup>
     <Compile Include="RdmClusterTransport.cs" />
+    <Compile Include="SecondLevelCacheClusterTransportBase.cs" />
     <Compile Include="UdpMulticastClusterTransport.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
   </ItemGroup>
