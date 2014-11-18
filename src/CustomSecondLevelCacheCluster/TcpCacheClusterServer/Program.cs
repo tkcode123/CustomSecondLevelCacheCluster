@@ -1,73 +1,96 @@
-﻿using System;
+﻿using CustomSecondLevelCacheClusterTransport;
+using System;
+using System.Collections.Generic;
+using System.Linq;
 using System.Net;
 using System.Net.Sockets;
-using System.Text;
 using System.Threading;
 
 namespace TcpCacheClusterServer
 {
-    // State object for reading client data asynchronously
-    public class StateObject
+    public class BroadcastClient
     {
-        // Client  socket.
-        public Socket workSocket = null;
-        // Size of receive buffer.
-        public const int BufferSize = 1024;
-        // Receive buffer.
-        public byte[] buffer = new byte[BufferSize];
-        // Received data string.
-        public StringBuilder sb = new StringBuilder();
-    }
+        public readonly Socket ClientSocket;
+        public readonly byte[] HeaderBuffer;
+        // Access to definitions that the DataAccess client also uses.
+        public readonly SecondLevelCacheClusterTransportBase Definition;
+        // String representation of the client.
+        private readonly string name;
 
-    public class AsynchronousSocketListener
-    {
-        // Thread signal.
-        public static ManualResetEvent allDone = new ManualResetEvent(false);
-
-        public AsynchronousSocketListener()
+        public BroadcastClient(Socket s, SecondLevelCacheClusterTransportBase t)
         {
+            ClientSocket = s;
+            Definition = t;
+            HeaderBuffer = new byte[t.HeaderLength];
+            name = s.RemoteEndPoint.ToString();
         }
 
-        public static void StartListening(int port)
+        public override string ToString() { return name; }  
+    }
+
+    class Broadcast
+    {
+        private static int counter;
+
+        public Broadcast()
         {
-            // Data buffer for incoming data.
-            byte[] bytes = new Byte[1024];
+            Number = Interlocked.Increment(ref counter);
+        }
+
+        public byte[] Data { get; set; }
+        public BroadcastClient Sender { get; set; }
+        public int Number { get; private set; } 
+    }
+
+    class BroadcastTarget
+    {
+        public Broadcast Message { get; set; }
+        public BroadcastClient Target { get; set; }
+    }
+
+    public class AsynchronousSocketListener 
+    {
+        // Thread signal.
+        private static ManualResetEvent allDone = new ManualResetEvent(false);
+        internal static SecondLevelCacheClusterTransportBase definition = new TcpCacheClusterTransport();
+        private static readonly List<BroadcastClient> clients = new List<BroadcastClient>(8);
+
+        public static void Main(string[] args)
+        {
+            int port = args.Length > 0 ? Int32.Parse(args[0]) : 9999;
             
             IPEndPoint localEndPoint = new IPEndPoint(IPAddress.Any, port);
 
             // Create a TCP/IP socket.
-            var listener = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
-
-            // Bind the socket to the local endpoint and listen for incoming connections.
-            try
+            using (var listener = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp))
             {
-                listener.Bind(localEndPoint);
-                listener.Listen(10);
-
-                while (true)
+                // Bind the socket to the local endpoint and listen for incoming connections.
+                try
                 {
-                    // Set the event to nonsignaled state.
-                    allDone.Reset();
+                    listener.Bind(localEndPoint);
+                    listener.Listen(10);
 
-                    // Start an asynchronous socket to listen for connections.
-                    Console.WriteLine("Waiting for a connection...");
-                    listener.BeginAccept(
-                        new AsyncCallback(AcceptCallback),
-                        listener);
+                    Console.WriteLine("Accepting cache cluster connections on {0}", listener.LocalEndPoint);
 
-                    // Wait until a connection is made before continuing.
-                    allDone.WaitOne();
+                    while (true)
+                    {
+                        // Set the event to nonsignaled state.
+                        allDone.Reset();
+
+                        // Start an asynchronous socket to listen for connections.
+                        listener.BeginAccept(
+                            new AsyncCallback(AcceptCallback),
+                            listener);
+
+                        // Wait until a connection is made before continuing.
+                        allDone.WaitOne();
+                    }
                 }
-
+                catch (Exception e)
+                {
+                    Console.WriteLine(e.ToString());
+                }
             }
-            catch (Exception e)
-            {
-                Console.WriteLine(e.ToString());
-            }
-
-            Console.WriteLine("\nPress ENTER to continue...");
-            Console.Read();
-
         }
 
         public static void AcceptCallback(IAsyncResult ar)
@@ -77,90 +100,140 @@ namespace TcpCacheClusterServer
 
             // Get the socket that handles the client request.
             Socket listener = (Socket)ar.AsyncState;
-            Socket handler = listener.EndAccept(ar);
+            Socket clientSocket = listener.EndAccept(ar);
 
             // Create the state object.
-            StateObject state = new StateObject();
-            state.workSocket = handler;
-            handler.BeginReceive(state.buffer, 0, state.buffer.Length, SocketFlags.None,
-                                new AsyncCallback(ReadCallback), state);
+            BroadcastClient client = new BroadcastClient(clientSocket, definition);
+            lock (clients)
+            {
+                clients.Add(client);
+                Console.WriteLine("ACCEPTED {0}", client);
+            }
+            clientSocket.BeginReceive(client.HeaderBuffer, 0, client.HeaderBuffer.Length, SocketFlags.None,
+                                new AsyncCallback(ReadCallback), client);
         }
 
         public static void ReadCallback(IAsyncResult ar)
         {
-            String content = String.Empty;
-
             // Retrieve the state object and the handler socket
             // from the asynchronous state object.
-            StateObject state = (StateObject)ar.AsyncState;
-            Socket handler = state.workSocket;
+            BroadcastClient source = (BroadcastClient)ar.AsyncState;
 
             // Read data from the client socket. 
-            int bytesRead = handler.EndReceive(ar);
-
-            if (bytesRead > 0)
+            bool close = false;
+            try
             {
-                // There  might be more data, so store the data received so far.
-                state.sb.Append(Encoding.ASCII.GetString(
-                    state.buffer, 0, bytesRead));
-
-                // Check for end-of-file tag. If it is not there, read 
-                // more data.
-                content = state.sb.ToString();
-                if (content.IndexOf("<EOF>") > -1)
+                int bytesRead = source.ClientSocket.EndReceive(ar);
+           
+                if (bytesRead == source.Definition.HeaderLength)
                 {
-                    // All the data has been read from the 
-                    // client. Display it on the console.
-                    Console.WriteLine("Read {0} bytes from socket. \n Data : {1}",
-                        content.Length, content);
-                    // Echo the data back to the client.
-                    Send(handler, content);
+                    SecondLevelCacheClusterTransportBase.OpCode code;
+                    int len = source.Definition.ReadHeader(source.HeaderBuffer, out code);
+                    if (len > 0 && (code & SecondLevelCacheClusterTransportBase.OpCode.Evict) != 0)
+                    {
+                        var tmp = new byte[len+source.Definition.HeaderLength];
+                        Buffer.BlockCopy(source.HeaderBuffer, 0, tmp, 0, source.Definition.HeaderLength);
+                        if (SecondLevelCacheClusterTransportBase.ReceiveAll(source.ClientSocket, tmp, source.Definition.HeaderLength, len))
+                        {
+                            var bc = new Broadcast() { Data = tmp, Sender = source };
+                            Console.WriteLine("RECEIVED #{0} of {1} bytes from {2}", bc.Number, tmp.Length, source);
+                            ThreadPool.QueueUserWorkItem(PerformBroadcast, bc);
+                        }
+                        else
+                        {
+                            Console.WriteLine("Data truncation {0} bytes from {1}", len, source);
+                            close = true;
+                        }
+                    }
+                    else 
+                    {
+                        Console.WriteLine("RECEIVED {0} / {1} from {2}", code, len, source);
+                    }
                 }
                 else
+                    close = true;
+            }
+            catch
+            {
+                close = true;
+            }
+
+            if (close)
+            {
+                source.ClientSocket.Shutdown(SocketShutdown.Both);
+                source.ClientSocket.Close();
+                source.ClientSocket.Dispose();
+                lock (clients)
                 {
-                    // Not all data received. Get more.
-                    handler.BeginReceive(state.buffer, 0, StateObject.BufferSize, 0,
-                    new AsyncCallback(ReadCallback), state);
+                    clients.Remove(source);
+                    Console.WriteLine("DISCONNECTED {0}", source);
                 }
+            }
+            else
+            {
+                source.ClientSocket.BeginReceive(source.HeaderBuffer, 0, source.HeaderBuffer.Length, SocketFlags.None,
+                                                new AsyncCallback(ReadCallback), source);
             }
         }
 
-        private static void Send(Socket handler, String data)
+        private static void PerformBroadcast(object bc)
         {
-            // Convert the string data to byte data using ASCII encoding.
-            byte[] byteData = Encoding.ASCII.GetBytes(data);
+            Broadcast broadcast = (Broadcast)bc;
+            List<BroadcastTarget> toSend;
+            lock (clients)
+            {
+                toSend = clients.Where(x => x != broadcast.Sender)
+                                .Select(x => new BroadcastTarget() { Message = broadcast, Target = x }).ToList();
+            }
+            foreach (var bct in toSend)
+            {
+                Console.WriteLine("  SENDING #{0} to {1}", broadcast.Number, bct.Target);
 
-            // Begin sending the data to the remote device.
-            handler.BeginSend(byteData, 0, byteData.Length, 0,
-                new AsyncCallback(SendCallback), handler);
+                try
+                {
+                    bct.Target.ClientSocket.BeginSend(bct.Message.Data, 0, bct.Message.Data.Length, SocketFlags.None,
+                                                      new AsyncCallback(SendCallback), bct);
+                }
+                catch
+                {
+                    Shutdown(bct.Target.ClientSocket);
+                }
+            }
         }
 
         private static void SendCallback(IAsyncResult ar)
         {
+            BroadcastTarget target = (BroadcastTarget)ar.AsyncState;
+            bool close = false;
             try
             {
-                // Retrieve the socket from the state object.
-                Socket handler = (Socket)ar.AsyncState;
-
-                // Complete sending the data to the remote device.
-                int bytesSent = handler.EndSend(ar);
-                Console.WriteLine("Sent {0} bytes to client.", bytesSent);
-
-                handler.Shutdown(SocketShutdown.Both);
-                handler.Close();
-
+                // Completed sending the data to the remote device.
+                int bytesSent = target.Target.ClientSocket.EndSend(ar);
+                if (bytesSent != target.Message.Data.Length)
+                {
+                    Console.WriteLine("Data send problem #{0} to {1}", target.Message.Number, target.Target);
+                    close = true;                    
+                }
             }
-            catch (Exception e)
+            catch
             {
-                Console.WriteLine(e.ToString());
+                close = true;
+            }
+            if (close)
+            {
+                Shutdown(target.Target.ClientSocket);
             }
         }
 
-
-        public static int Main(string[] args)
+        private static void Shutdown(Socket socket)
         {
-            StartListening(args.Length > 0 ? Int32.Parse(args[0]) : 9999);
-            return 0;
+            try
+            {
+                socket.Shutdown(SocketShutdown.Both);
+            }
+            catch
+            {
+            }
         }
     }
 }

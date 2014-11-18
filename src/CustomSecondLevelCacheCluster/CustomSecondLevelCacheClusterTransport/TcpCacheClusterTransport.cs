@@ -49,18 +49,7 @@ namespace CustomSecondLevelCacheClusterTransport
 
         public override void SendMessage(byte[] buffer)
         {
-            List<ArraySegment<byte>> pieces = new List<ArraySegment<byte>>(3);
-            pieces.Add(new ArraySegment<byte>(this.localIdentifier));
-            lock (this)
-            {
-                var lengthBuffer = BitConverter.GetBytes(buffer.Length);
-                pieces.Add(new ArraySegment<byte>(lengthBuffer));
-                pieces.Add(new ArraySegment<byte>(buffer));
-                int entire = buffer.Length + localIdentifier.Length + lengthBuffer.Length;
-                int ret = socket.Send(pieces, SocketFlags.None);
-                if (ret != entire)
-                    throw new InvalidOperationException(string.Format("Cache Communication broken."));
-            }
+            SendBase(buffer, socket);
         }
 
         public override void Close()
@@ -88,22 +77,23 @@ namespace CustomSecondLevelCacheClusterTransport
         {
             try
             {
-                byte[] b = new byte[MaxMessageSize + localIdentifier.Length + 4];
+                byte[] b = new byte[HeaderLength];
                 while (closed == false)
                 {
                     try
                     {
-                        if (ReceiveAll(b, 0, localIdentifier.Length + 4))
+                        if (ReceiveAll(socket, b, 0, HeaderLength))
                         {
-                            int len = BitConverter.ToInt32(b, localIdentifier.Length);
-                            bool fromMe = SentByMe(b);
-                            if (ReceiveAll(b, 0, len))
+                            OpCode code;
+                            int len = ReadHeader(b, out code);
+                            byte[] tmp = new byte[len];
+                            if (ReceiveAll(socket, tmp, 0, len))
                             {
-                                if (fromMe == false)
+                                if ((code & OpCode.SentByMe) == 0)
                                 {
-                                    handler.HandleMessage(new MemoryStream(b, 0, len, false));
+                                    handler.HandleMessage(new MemoryStream(tmp, 0, len, false));
                                     Interlocked.Increment(ref Counter);
-                                    log.LogInformation("Received {0} bytes", len + 4 + localIdentifier.Length);
+                                    log.LogInformation("Received {0} bytes", len + HeaderLength);
                                 }
                                 else
                                 {
@@ -125,20 +115,6 @@ namespace CustomSecondLevelCacheClusterTransport
             finally // TODO Error handling and restart!
             {
             }
-        }
-
-        private bool ReceiveAll(byte[] target, int offset, int reqLength)
-        {
-            while (reqLength > 0)
-            {
-                SocketError error;
-                int i = this.socket.Receive(target, offset, reqLength, SocketFlags.None, out error);
-                if (error != SocketError.Success)
-                    return false;
-                offset += i;
-                reqLength -= i;
-            }
-            return true;
-        }
+        }        
     }
 }

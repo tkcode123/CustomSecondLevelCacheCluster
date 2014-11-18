@@ -10,11 +10,14 @@ namespace TestCluster
     {
         static void Main(string[] args)
         {
-            using (var ctx = TestClusterModelContext.Create(args.Length > 0 ? args[0] : "DB1",
+            bool store = args.Length > 0 ? true : false;
+
+            using (var ctx = TestClusterModelContext.Create("DB1",
                                typeof(CustomSecondLevelCacheClusterTransport.TcpCacheClusterTransport).AssemblyQualifiedName))
             {
                 // Only needed the first time (or when the database model is changed)
-                // ctx.UpdateSchema();
+                if (store)
+                    ctx.UpdateSchema();
 
                 ctx.Log = Console.Out;
                 
@@ -31,10 +34,15 @@ namespace TestCluster
                     Console.WriteLine("KEY (q to end)>>");
                     if (string.Equals(Console.ReadLine(), "q"))
                         break;
-                    var frags = p.ProductName.Split(';');
-                    p.ProductName = "TestCluster;"+(1+Int32.Parse(frags[1]));
-                    Console.WriteLine("Storing {0}", p.ProductName);
-                    ctx.SaveChanges();
+                    if (store)
+                    {
+                        var frags = p.ProductName.Split(';');
+                        p.ProductName = "TestCluster;" + (1 + Int32.Parse(frags[1]));
+                        Console.WriteLine("Storing {0}", p.ProductName);
+                        ctx.SaveChanges();
+                    }
+                    Console.WriteLine("Seeing {0}", p.ProductName);
+                    ctx.ClearChanges();
                 }
 
                 ctx.DisposeDatabase("Shutdown");

@@ -1,4 +1,7 @@
 ﻿using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Net.Sockets;
 using Telerik.OpenAccess.Cluster;
 
 namespace CustomSecondLevelCacheClusterTransport
@@ -36,14 +39,85 @@ namespace CustomSecondLevelCacheClusterTransport
         // set from bc.SecondLevelCache.Synchronization.AdministrationQueue = "another value that you can interpret"
         public string AdministrationQueue { get; set; }
 
-        protected bool SentByMe(byte[] received)
+        private static bool SentByMe(byte[] received, byte[] me)
         {
-            for (int i = 0; i < this.localIdentifier.Length; i++)
+            for (int i = 0; i < me.Length; i++)
             {
-                if (received[i] != this.localIdentifier[i])
+                if (received[i] != me[i])
                     return false;
             }
             return true;
+        }
+
+        public static bool ReceiveAll(Socket socket, byte[] target, int offset, int reqLength)
+        {
+            while (reqLength > 0)
+            {
+                SocketError error;
+                int i = socket.Receive(target, offset, reqLength, SocketFlags.None, out error);
+                if (error != SocketError.Success)
+                    return false;
+                offset += i;
+                reqLength -= i;
+            }
+            return true;
+        }
+
+        public int HeaderLength { get { return this.localIdentifier.Length + 4; } }
+
+        public static int GetLength(List<ArraySegment<byte>> list)
+        {
+            return list != null ? list.Sum(x => x.Count) : 0;
+        }
+
+        public int ReadHeader(byte[] buffer, out OpCode operation)
+        {
+            if (buffer == null || buffer.Length < (this.localIdentifier.Length + 4))
+                throw new ArgumentException("Buffer to small");
+            int tmp = BitConverter.ToInt32(buffer, this.localIdentifier.Length);
+            operation = (OpCode)(byte)(tmp & 0xff);
+            if (SentByMe(buffer, this.localIdentifier))
+                operation |= OpCode.SentByMe;
+            return (tmp >> 8);
+        }
+
+        protected List<ArraySegment<byte>> PrepareSending(byte[] raw, OpCode operation)
+        {
+            var ret = new List<ArraySegment<byte>>(3);
+            ret.Add(new ArraySegment<byte>(this.localIdentifier));
+            int tmp = (raw == null) ? 0 : raw.Length;
+            tmp = (tmp << 8) | (byte)(operation & ~OpCode.SentByMe);
+            ret.Add(new ArraySegment<byte>(BitConverter.GetBytes(tmp)));
+            if (raw != null)
+                ret.Add(new ArraySegment<byte>(raw));
+
+            return ret;
+        }
+
+        [Flags]
+        public enum OpCode : byte
+        {
+            Hello = 1,
+            Evict = 2,
+            Bye = 4,
+
+            SentByMe = 128
+        }
+
+        protected void SendBase(byte[] buffer, Socket socket)
+        {
+            var toSend = PrepareSending(buffer, OpCode.Evict);
+            var length = GetLength(toSend);
+            log.LogInformation("Sending {0} bytes", length);
+
+            lock (this)
+            {
+                if (closed == false && socket != null)
+                {
+                    if (socket.Send(toSend, SocketFlags.None) != length)
+                        throw new InvalidOperationException("Cache Communication: Socket did not send all bytes.");
+                }
+            }
         }
 
         /// <summary>

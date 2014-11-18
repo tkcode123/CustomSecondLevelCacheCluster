@@ -56,20 +56,7 @@ namespace CustomSecondLevelCacheClusterTransport
 
         public override void SendMessage(byte[] buffer)
         {
-            var dup = new byte[buffer.Length + localIdentifier.Length];
-            Buffer.BlockCopy(localIdentifier, 0, dup, 0, localIdentifier.Length);
-            Buffer.BlockCopy(buffer, 0, dup, localIdentifier.Length, buffer.Length);
-
-            log.LogInformation("Sending {0} bytes", dup.Length);
-
-            lock (this)
-            {
-                if (closed == false && senderSocket != null)
-                {
-                    if (senderSocket.Send(dup, dup.Length, SocketFlags.None) != dup.Length)
-                        throw new InvalidOperationException("Socket did not send all bytes.");
-                }
-            }
+            SendBase(buffer, senderSocket);
         }
 
         public override void Close()
@@ -111,6 +98,40 @@ namespace CustomSecondLevelCacheClusterTransport
             }
         }
 
+        private bool ReceiveFrom(Partner p)
+        {
+            var b = new byte[MaxMessageSize + HeaderLength];
+            SocketError error;
+            int i = p.socket.Receive(b, 0, b.Length, SocketFlags.None, out error);
+            if (error != SocketError.Success)
+            {
+                return false;
+            }
+            if (i >= HeaderLength)
+            {
+                OpCode code;
+                int j = ReadHeader(b, out code);
+                if (j + HeaderLength != i)
+                    throw new InvalidOperationException("Received different length than expected");
+                if ((code & OpCode.SentByMe) != OpCode.SentByMe)
+                {
+                    handler.HandleMessage(new MemoryStream(b, HeaderLength, j, false));
+                    Interlocked.Increment(ref Counter);
+                    log.LogInformation("Received {0} bytes", i);
+                }
+                else
+                {
+                    log.LogInformation("Got my own eviction");
+                }
+                return true;
+            }
+            else
+            {
+                log.LogInformation("Received message to short");
+                return false;
+            }
+        }
+
         class Partner
         {
             internal readonly Socket socket;
@@ -124,27 +145,13 @@ namespace CustomSecondLevelCacheClusterTransport
 
             public void Receive(object x)
             {
-                var tmp = new byte[handler.MaxMessageSize];
-                SocketError err;
-                int len = socket.Receive(tmp, 0, tmp.Length, SocketFlags.None, out err);
-                if (err != SocketError.Success)
-                {
-                    try
-                    { socket.Close(); socket.Dispose(); }
-                    catch { }
-                    return;
-                }
-                if (handler.SentByMe(tmp) == false)
-                {
-                    handler.log.LogInformation("Received {0} bytes", tmp.Length);
-                    handler.handler.HandleMessage(new MemoryStream(tmp, handler.localIdentifier.Length, 
-                                                                        len - handler.localIdentifier.Length, false));
-                }
+                if (handler.ReceiveFrom(this))
+                    ThreadPool.QueueUserWorkItem(this.Receive);
                 else
                 {
-                    handler.log.LogInformation("Got my own eviction");
+                    try { socket.Close(); socket.Dispose(); }
+                    catch { }
                 }
-                ThreadPool.QueueUserWorkItem(this.Receive);
             }
         }
     }

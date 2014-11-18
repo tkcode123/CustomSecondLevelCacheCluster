@@ -60,17 +60,7 @@ namespace CustomSecondLevelCacheClusterTransport
 
         public override void SendMessage(byte[] buffer)
         {
-            var dup = new byte[buffer.Length + localIdentifier.Length];
-            Buffer.BlockCopy(localIdentifier, 0, dup, 0, localIdentifier.Length);
-            Buffer.BlockCopy(buffer, 0, dup, localIdentifier.Length, buffer.Length);
-
-            log.LogInformation("Sending {0} bytes", dup.Length);
-
-            lock (this)
-            {
-                if (senderSocket.Send(dup, dup.Length, SocketFlags.None) != dup.Length)
-                    throw new InvalidOperationException("Socket did not send all bytes.");
-            }
+            SendBase(buffer, senderSocket);
         }
 
         public override void Close()
@@ -97,7 +87,7 @@ namespace CustomSecondLevelCacheClusterTransport
         {           
             try
             {
-                byte[] b = new byte[MaxMessageSize+localIdentifier.Length];
+                byte[] b = new byte[MaxMessageSize+HeaderLength];
                 while (closed == false)
                 {
                     try
@@ -109,11 +99,15 @@ namespace CustomSecondLevelCacheClusterTransport
                             continue;
                         if (error == SocketError.Interrupted || error == SocketError.OperationAborted)
                             break;
-                        if (i > this.localIdentifier.Length)
+                        if (i >= HeaderLength)
                         {
-                            if (SentByMe(b) == false)
+                            OpCode code;
+                            int j = ReadHeader(b, out code);
+                            if (j + HeaderLength != i)
+                                throw new InvalidOperationException("Received different length than expected");
+                            if ((code & OpCode.SentByMe) != OpCode.SentByMe)
                             {
-                                handler.HandleMessage(new MemoryStream(b, this.localIdentifier.Length, i - this.localIdentifier.Length, false));
+                                handler.HandleMessage(new MemoryStream(b, HeaderLength, j, false));
                                 Interlocked.Increment(ref Counter);
                                 log.LogInformation("Received {0} bytes", i);
                             }
@@ -122,6 +116,8 @@ namespace CustomSecondLevelCacheClusterTransport
                                 log.LogInformation("Got my own eviction");
                             }
                         }
+                        else
+                            throw new InvalidOperationException("Received message to short");
                     }
                     catch (SocketException e)
                     {
