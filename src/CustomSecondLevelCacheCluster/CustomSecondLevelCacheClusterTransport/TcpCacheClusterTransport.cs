@@ -57,8 +57,7 @@ namespace CustomSecondLevelCacheClusterTransport
             closed = true;
             if (socket != null)
             {
-                socket.Shutdown(SocketShutdown.Both);
-                socket.Close();
+                SafeClose(socket);
             }
             if (receiverThread != null)
             {
@@ -115,6 +114,20 @@ namespace CustomSecondLevelCacheClusterTransport
             finally // TODO Error handling and restart!
             {
             }
-        }        
+        }
+
+        #region IDisposable Members
+
+        protected override void Dispose(bool disposing)
+        {
+            if (closed == false && disposing && socket != null)
+            {
+                SafeClose(socket);
+                socket.Dispose();
+                socket = null;
+            }
+        }
+
+        #endregion
     }
 }

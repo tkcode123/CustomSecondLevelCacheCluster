@@ -64,18 +64,9 @@ namespace CustomSecondLevelCacheClusterTransport
             lock (this)
             {
                 closed = true;
-                if (senderSocket != null)
-                {
-                    try { senderSocket.Shutdown(SocketShutdown.Send); senderSocket.Close(); senderSocket = null; }
-                    catch { }
-                }
-                if (receiverSocket != null)
-                {
-                    try { receiverSocket.Shutdown(SocketShutdown.Receive); receiverSocket.Close(); receiverSocket = null; }
-                    catch { }
-                }
-            }
-            
+                senderSocket = SafeClose(senderSocket);
+                receiverSocket = SafeClose(receiverSocket);
+            }            
             handler = null;
         }
 
@@ -131,6 +122,22 @@ namespace CustomSecondLevelCacheClusterTransport
                 return false;
             }
         }
+
+        #region IDisposable Members
+
+        protected override void Dispose(bool disposing)
+        {
+            if (closed == false && disposing)
+            {
+                Close();
+                if (senderSocket != null)
+                    senderSocket.Dispose();
+                if (receiverSocket != null)
+                    receiverSocket.Dispose();
+            }
+        }
+
+        #endregion
 
         class Partner
         {

@@ -6,7 +6,7 @@ using Telerik.OpenAccess.Cluster;
 
 namespace CustomSecondLevelCacheClusterTransport
 {
-    public abstract class SecondLevelCacheClusterTransportBase : OpenAccessClusterTransport
+    public abstract class SecondLevelCacheClusterTransportBase : OpenAccessClusterTransport, IDisposable
     {
         protected OpenAccessClusterMsgHandler handler;
         protected IOpenAccessClusterTransportLog log;
@@ -145,5 +145,37 @@ namespace CustomSecondLevelCacheClusterTransport
         /// </summary>
         /// <param name="buffer">Message to send</param>
         public abstract void SendMessage(byte[] buffer);
+
+        public static Socket SafeClose(Socket s)
+        {
+            if (s != null)
+            {
+                try
+                {
+                    s.Shutdown(SocketShutdown.Both); s.Close();
+                }
+                catch
+                {
+                }
+                s = null;
+            }
+            return s;
+        }
+
+        #region IDisposable Members
+
+        ~SecondLevelCacheClusterTransportBase()
+        {
+            Dispose(false);
+        }
+
+        public void Dispose()
+        {
+            Dispose(true);
+        }
+
+        protected abstract void Dispose(bool disposing);
+
+        #endregion
     }
 }

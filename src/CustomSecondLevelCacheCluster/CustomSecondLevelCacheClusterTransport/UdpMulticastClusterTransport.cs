@@ -76,8 +76,7 @@ namespace CustomSecondLevelCacheClusterTransport
                 if (receiverThread.Join(2000))
                 {
                     receiverThread = null;
-                    receiverSocket.Dispose();
-                    senderSocket.Dispose();
+                    this.Dispose();
                 }
             }
             handler = null;
@@ -129,5 +128,21 @@ namespace CustomSecondLevelCacheClusterTransport
             {
             }
         }
+
+        #region IDisposable Members
+
+        protected override void Dispose(bool disposing)
+        {
+            if (closed == false && disposing)
+            {
+                if (senderSocket != null)
+                    senderSocket.Dispose();
+                if (receiverSocket != null)
+                    receiverSocket.Dispose();
+                senderSocket = receiverSocket = null;
+            }
+        }
+
+        #endregion
     }
 }
