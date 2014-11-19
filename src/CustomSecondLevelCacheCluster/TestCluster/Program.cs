@@ -48,6 +48,5 @@ namespace TestCluster
                 ctx.DisposeDatabase("Shutdown");
             }
         }
-
     }
 }

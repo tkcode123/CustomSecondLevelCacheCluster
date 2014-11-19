@@ -60,7 +60,7 @@ namespace CustomSecondLevelCacheClusterTransport
 
         public override void SendMessage(byte[] buffer)
         {
-            SendBase(buffer, senderSocket);
+            SendBase(buffer, senderSocket, OpCode.Evict);
         }
 
         public override void Close()

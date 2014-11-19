@@ -51,16 +51,44 @@ namespace CustomSecondLevelCacheClusterTransport
 
         public static bool ReceiveAll(Socket socket, byte[] target, int offset, int reqLength)
         {
-            while (reqLength > 0)
+            try
             {
-                SocketError error;
-                int i = socket.Receive(target, offset, reqLength, SocketFlags.None, out error);
-                if (error != SocketError.Success)
-                    return false;
-                offset += i;
-                reqLength -= i;
+                while (reqLength > 0)
+                {
+                    SocketError error;
+                    int i = socket.Receive(target, offset, reqLength, SocketFlags.None, out error);
+                    if (error != SocketError.Success)
+                        return false;
+                    offset += i;
+                    reqLength -= i;
+                }
+                return true;
             }
-            return true;
+            catch
+            {
+                return false;
+            }
+        }
+
+        public static bool SendAll(Socket socket, byte[] target, int offset, int reqLength)
+        {
+            try
+            {
+                while (reqLength > 0)
+                {
+                    SocketError error;
+                    int i = socket.Send(target, offset, reqLength, SocketFlags.None, out error);
+                    if (error != SocketError.Success)
+                        return false;
+                    offset += i;
+                    reqLength -= i;
+                }
+                return true;
+            }
+            catch
+            {
+                return false;
+            }
         }
 
         public int HeaderLength { get { return this.localIdentifier.Length + 4; } }
@@ -98,15 +126,15 @@ namespace CustomSecondLevelCacheClusterTransport
         public enum OpCode : byte
         {
             Hello = 1,
-            Evict = 2,
-            Bye = 4,
+            Welcome = 2, 
+            Evict = 4,
 
             SentByMe = 128
         }
 
-        protected void SendBase(byte[] buffer, Socket socket)
+        protected void SendBase(byte[] buffer, Socket socket, OpCode code)
         {
-            var toSend = PrepareSending(buffer, OpCode.Evict);
+            var toSend = PrepareSending(buffer, code);
             var length = GetLength(toSend);
             log.LogInformation("Sending {0} bytes", length);
 
@@ -114,8 +142,15 @@ namespace CustomSecondLevelCacheClusterTransport
             {
                 if (closed == false && socket != null)
                 {
-                    if (socket.Send(toSend, SocketFlags.None) != length)
-                        throw new InvalidOperationException("Cache Communication: Socket did not send all bytes.");
+                    SocketError error;
+                    if (socket.Send(toSend, SocketFlags.None, out error) != length)
+                        closed = true;
+                    else
+                        closed = error != SocketError.Success;
+                }
+                if (closed)
+                {
+                    throw new InvalidOperationException("Cache Communication Broken");
                 }
             }
         }

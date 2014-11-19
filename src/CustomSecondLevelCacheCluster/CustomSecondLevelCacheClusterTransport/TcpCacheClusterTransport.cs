@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Net;
 using System.Net.Sockets;
+using System.Text;
 using System.Threading;
 using Telerik.OpenAccess.Cluster;
 
@@ -32,24 +33,52 @@ namespace CustomSecondLevelCacheClusterTransport
 
             if (string.IsNullOrWhiteSpace(this.multicastAddress) || this.multicastPort <= 0)
                 throw new ArgumentException("Missing MulticastAddress setting.");
-            IPAddress ip = IPAddress.Parse(multicastAddress);
+
+            IPAddress ip;
+            if (IPAddress.TryParse(this.multicastAddress, out ip) == false)
+                throw new ArgumentException(string.Format("Unable to parse IP address {0}", this.multicastAddress));
             IPEndPoint ipep = new IPEndPoint(ip, multicastPort);
 
             // Create a TCP/IP  socket.
-            socket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp );
-            socket.SetSocketOption(SocketOptionLevel.Tcp, SocketOptionName.NoDelay, 1);
+            socket = new Socket(ip.AddressFamily, SocketType.Stream, ProtocolType.Tcp );
+            try
+            {
+                socket.SetSocketOption(SocketOptionLevel.Tcp, SocketOptionName.NoDelay, 1);
 
-            // Connect the socket to the remote endpoint
-            socket.Connect(ipep);           
+                // Connect the socket to the remote endpoint
+                socket.Connect(ipep);
 
-            receiverThread = new Thread(new ThreadStart(ReceiveLoop));
-            receiverThread.Name = "Cache Eviction Listener";
-            receiverThread.Start();
+                var greeting = Encoding.UTF8.GetBytes(string.IsNullOrEmpty(this.Localpath) ? "<Localpath>" : this.Localpath);
+                SendBase(greeting, socket, OpCode.Hello);
+
+                byte[] tmp = new byte[HeaderLength];
+                if (ReceiveAll(socket, tmp, 0, tmp.Length))
+                {
+                    OpCode code;
+                    if (ReadHeader(tmp, out code) == 0 && (code & OpCode.Welcome) != 0)
+                    {
+                        receiverThread = new Thread(new ThreadStart(ReceiveLoop));
+                        receiverThread.Name = "Cache Eviction Listener for " + ipep.ToString();
+                        receiverThread.Start();
+                    }
+                    else
+                        Close();
+                }
+                else
+                    Close();
+            }
+            catch
+            {
+                Close();
+                throw;
+            }
+            if (socket == null)
+                throw new InvalidOperationException("Initial Handshake with TcpCacheClusterServer failed.");
         }
 
         public override void SendMessage(byte[] buffer)
         {
-            SendBase(buffer, socket);
+            SendBase(buffer, socket, OpCode.Evict);
         }
 
         public override void Close()
