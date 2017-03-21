@@ -10,6 +10,8 @@ namespace CustomSecondLevelCacheClusterTransport
     {
         protected OpenAccessClusterMsgHandler handler;
         protected IOpenAccessClusterTransportLog log;
+        protected string multicastUser;
+        protected string multicastPassword;
         protected string multicastAddress;
         protected int multicastPort;
         protected volatile bool closed;
@@ -24,12 +26,36 @@ namespace CustomSecondLevelCacheClusterTransport
         // set from bc.SecondLevelCache.Synchronization.MulticastAddress = "224.1.1.1:444";
         public string Multicastaddr
         {
-            get { return multicastAddress + ":" + multicastPort; }
+            get
+            {
+                string address = multicastAddress + ":" + multicastPort;
+                string credentials = string.Join(":", new[] { multicastUser, multicastPassword }.Where(_ => !string.IsNullOrEmpty(_)));
+                if (!string.IsNullOrEmpty(credentials))
+                {
+                    address = credentials + "@" + address;
+                }
+
+                return address;
+            }
             set
             {
-                int pos = value.IndexOf(':');
-                multicastAddress = value.Substring(0, pos);
+                int pos = value.LastIndexOf(':');
                 multicastPort = Int32.Parse(value.Substring(pos + 1));
+                multicastAddress = value.Substring(0, pos);
+                if (!string.IsNullOrEmpty(multicastAddress) && multicastAddress.Contains("@"))
+                {
+                    string credentials = multicastAddress.Substring(0, multicastAddress.LastIndexOf("@"));
+                    if (!string.IsNullOrEmpty(credentials))
+                    {
+                        multicastUser = credentials;
+                        if (credentials.Contains(":"))
+                        {
+                            multicastUser = credentials.Substring(0, credentials.IndexOf(":"));
+                            multicastPassword = credentials.Substring(multicastUser.Length + 1);
+                        }
+                    }
+                    multicastAddress = multicastAddress.Substring(multicastAddress.LastIndexOf("@") + 1);
+                }
             }
         }
 

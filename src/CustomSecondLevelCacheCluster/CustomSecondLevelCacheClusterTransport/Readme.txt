@@ -8,6 +8,7 @@ Examples:
     single point of failure.
 (2) UDP multicast based implementation. Main disadvantage: Messages can be lost, and this will not be detected.
 (3) RDM socket with PGM implementation. Main disadvantage: You will need to install MSMQ before this works.
+(4) RabbitMQ implementation. Main disadvantage: You will need to install RabbitMQ before this works.
 
 
 All three share a common base class, SecondLevelCacheClusterTransportBase. This abstract base class is providing
@@ -39,6 +40,8 @@ might want to take it for monitoring purposes in your implementation.
 When using multicasting/broadcasting, the sender might actually get its own message back. You can filter this message out - 
 there is no need for a local eviction (which was already done). The detection whether the message was sent by the local or another
 participant in the cache cluster is implemented with the Guid value that is send always as the first 16 bytes.
+
+When using the RabbitMQ implementation, the LocalPath value will be used as the queue name, and the MulticastAddr can be defined as {user}:{password}@{host}:{port}. If any of the information is missing, the default value will be used. If you want to use a VirtualHost, it could be specified using the as part of the host by like "localhost/vhost".
 
 The OpenAccessClusterMsgHandler instance that is passed into the Init() call needs to be used to delegate the received 
 eviction messages back to the local cache instance. The implementation instance is multi-thread safe.
